@@ -100,7 +100,19 @@ class TestTaskPoolExecutor:
             with pytest.raises(ValueError, match="max_workers must be greater than 0"):
                 TaskPoolExecutor(max_workers=number)
 
-    async def test_free_reference(self, executor):
+    async def test_free_future_reference(self, executor):
+        future = await executor.submit(make_dummy_object, 1)
+        await future
+
+        wr = weakref.ref(future)
+        del future
+        # the future is not released exactly when the result is set but when the task's
+        # wakeup callback runs via the event loop's call_soon()
+        assert wr() is not None
+        await asyncio.sleep(0)
+        assert wr() is None
+
+    async def test_free_result_reference(self, executor):
         # Issue #14406: Result iterator should not keep an internal
         # reference to result objects.
         async for obj in await executor.map(make_dummy_object, range(10)):

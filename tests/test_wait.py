@@ -2,17 +2,7 @@ import asyncio
 import sys
 from concurrent import futures
 
-from test_as_completed import cancelled_future, exception_future, successful_future
-
-
-async def amul(x, y):
-    await asyncio.sleep(0.01)
-    return x * y
-
-
-async def wait_and_raise(e):
-    await e.wait()
-    raise RuntimeError("this is an exception")
+from . import amul, cancelled_future, exception_future, successful_future
 
 
 class TestTaskPoolWait:
@@ -55,6 +45,10 @@ class TestTaskPoolWait:
         await future1  # wait for job to finish
 
     async def test_first_exception(self, executor):
+        async def wait_and_raise(event):
+            await event.wait()
+            raise RuntimeError("this is an exception")
+
         event1 = asyncio.Event()
         event2 = asyncio.Event()
         try:

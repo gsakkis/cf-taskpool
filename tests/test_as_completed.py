@@ -4,30 +4,7 @@ from contextlib import suppress
 
 import pytest
 
-Future = asyncio.Future[object]
-
-
-def cancelled_future():
-    f = Future()
-    f.cancel()
-    return f
-
-
-def exception_future():
-    f = Future()
-    f.set_exception(OSError())
-    return f
-
-
-def successful_future():
-    f = Future()
-    f.set_result(42)
-    return f
-
-
-async def amul(x, y):
-    await asyncio.sleep(0.01)
-    return x * y
+from . import amul, cancelled_future, exception_future, successful_future
 
 
 class TestTaskPoolAsCompleted:

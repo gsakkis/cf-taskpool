@@ -7,15 +7,7 @@ from test.support.script_helper import assert_python_ok
 
 from cf_taskpool import TaskPoolExecutor
 
-
-async def amul(x, y):
-    await asyncio.sleep(0.01)
-    return x * y
-
-
-async def aabs(x):
-    await asyncio.sleep(0.01)
-    return abs(x)
+from . import aabs, amul
 
 
 def assert_run_taskpool_executor(expected_out, transient, shutdown=None):

@@ -2,47 +2,27 @@ import asyncio
 import contextlib
 import os
 import weakref
+from functools import partial
 
 import pytest
 
 from cf_taskpool import TaskPoolExecutor
 
-
-async def amul(x, y):
-    await asyncio.sleep(0.01)
-    return x * y
-
-
-async def adivmod(x, y):
-    await asyncio.sleep(0.01)
-    return divmod(x, y)
-
-
-async def adivmod_cancel(x, y):
-    await asyncio.sleep(0.01)
-    if y == 0:
-        raise asyncio.CancelledError
-    return divmod(x, y)
-
-
-async def acapture(*args, **kwargs):
-    await asyncio.sleep(0.01)
-    return args, kwargs
+from . import adivmod, amul
 
 
 class MyObject:
+    def __init__(self, i):
+        self.i = i
+
     async def my_method(self):
-        pass
+        await asyncio.sleep(0.01)
+        return self.i
 
-
-async def make_dummy_object(_):
-    await asyncio.sleep(0.01)
-    return MyObject()
-
-
-async def araiser(exception):
-    await asyncio.sleep(0.01)
-    raise exception
+    @classmethod
+    async def create(cls, i):
+        await asyncio.sleep(0.01)
+        return cls(i)
 
 
 class FalseyBoolError(Exception):
@@ -62,6 +42,10 @@ class TestTaskPoolExecutor:
         assert future.result() == 16
 
     async def test_submit_keyword(self, executor):
+        async def acapture(*args, **kwargs):
+            await asyncio.sleep(0.01)
+            return args, kwargs
+
         future = await executor.submit(amul, 2, y=8)
         assert await future == 16
         assert future.result() == 16
@@ -82,7 +66,7 @@ class TestTaskPoolExecutor:
         assert future.exception() is exc_info.value
 
     async def test_cancellation(self, executor):
-        future = await executor.submit(adivmod_cancel, 2, 0)
+        future = await executor.submit(adivmod, 2, 0, cancel_if_zero=True)
         with pytest.raises(asyncio.CancelledError):
             await future
         assert future.cancelled()
@@ -94,7 +78,10 @@ class TestTaskPoolExecutor:
 
     @pytest.mark.parametrize(
         ("func", "exc_type"),
-        [(adivmod, ZeroDivisionError), (adivmod_cancel, asyncio.CancelledError)],
+        [
+            (adivmod, ZeroDivisionError),
+            (partial(adivmod, cancel_if_zero=True), asyncio.CancelledError),
+        ],
     )
     async def test_map_exception(self, executor, func, exc_type):
         agen = await executor.map(func, [1, 1, 1, 1], [2, 3, 0, 5])
@@ -106,7 +93,7 @@ class TestTaskPoolExecutor:
     async def test_no_stale_references(self, executor):
         # Issue #16284: check that the executors don't unnecessarily hang onto
         # references.
-        my_object = MyObject()
+        my_object = MyObject(1)
         my_object_collected = asyncio.Event()
         my_object_callback = weakref.ref(my_object, lambda _: my_object_collected.set())
         # Deliberately discarding the future.
@@ -124,7 +111,7 @@ class TestTaskPoolExecutor:
                 TaskPoolExecutor(max_workers=number)
 
     async def test_free_future_reference(self, executor):
-        future = await executor.submit(make_dummy_object, 1)
+        future = await executor.submit(MyObject.create, 1)
         await future
 
         wr = weakref.ref(future)
@@ -138,7 +125,7 @@ class TestTaskPoolExecutor:
     async def test_free_result_reference(self, executor):
         # Issue #14406: Result iterator should not keep an internal
         # reference to result objects.
-        async for obj in await executor.map(make_dummy_object, range(10)):
+        async for obj in await executor.map(MyObject.create, range(10)):
             wr = weakref.ref(obj)
             del obj
             # the result may be still referenced by a future that is released when the
@@ -151,8 +138,12 @@ class TestTaskPoolExecutor:
     async def test_swallows_falsey_exceptions(self, executor, exc_type):
         # see gh-132063: Prevent exceptions that evaluate as falsey from being ignored.
         # Recall: `x` is falsey if `len(x)` returns 0 or `bool(x)` returns False.
+        async def araise(exception):
+            await asyncio.sleep(0.01)
+            raise exception
+
         msg = "falsy"
-        future = await executor.submit(araiser, exc_type(msg))
+        future = await executor.submit(araise, exc_type(msg))
         with pytest.raises(exc_type, match=msg):
             await future
 

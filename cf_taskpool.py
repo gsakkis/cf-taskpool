@@ -1,14 +1,13 @@
 import asyncio
 import contextlib
+import inspect
 import itertools
 import os
 import weakref
-from collections.abc import AsyncGenerator, Awaitable, Callable
-from functools import partial
-from typing import Any, Self
+from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Iterable
+from typing import Any, Self, overload
 
-type _WorkItem[T] = tuple[asyncio.Future[T], Callable[[], Awaitable[T]]]
-type _WorkQueue = asyncio.Queue[_WorkItem[Any] | None]
+_WorkQueue = asyncio.Queue[tuple[asyncio.Future[Any], Awaitable[Any]] | None]
 
 
 class TaskPoolExecutor:
@@ -21,7 +20,7 @@ class TaskPoolExecutor:
         if max_workers <= 0:
             raise ValueError("max_workers must be greater than 0")
         self._max_workers = max_workers
-        self._work_queue: _WorkQueue = asyncio.Queue()
+        self._work_queue = _WorkQueue()
         self._idle_semaphore = asyncio.Semaphore(0)
         self._tasks: set[asyncio.Task[None]] = set()
         self._shutdown = False
@@ -34,22 +33,45 @@ class TaskPoolExecutor:
     async def __aexit__(self, *args: object) -> None:
         await self.shutdown()
 
-    async def submit[T](
-        self, fn: Callable[..., Awaitable[T]], /, *args: object, **kwargs: object
+    @overload
+    async def submit[T, **P](
+        self, fn: Callable[P, Awaitable[T]], /, *args: P.args, **kwargs: P.kwargs
+    ) -> asyncio.Future[T]: ...
+
+    @overload
+    async def submit[T](self, aw: Awaitable[T], /) -> asyncio.Future[T]: ...
+
+    async def submit[T, **P](
+        self,
+        aw_or_fn: Callable[P, Awaitable[T]] | Awaitable[T],
+        /,
+        *args: P.args,
+        **kwargs: P.kwargs,
     ) -> asyncio.Future[T]:
+        future: asyncio.Future[T] = asyncio.Future()
+        if isinstance(aw_or_fn, Awaitable):
+            if args or kwargs:
+                raise TypeError("Cannot pass args/kwargs when submitting an awaitable")
+            awaitable = aw_or_fn
+        else:
+            awaitable = _shielded_run_coro(aw_or_fn, *args, **kwargs)
+
+        if inspect.iscoroutine(awaitable):
+            # When the future gets garbage collected, ensure the coroutine is closed
+            weakref.finalize(future, _close_unawaited_coro, awaitable)
+
         async with self._shutdown_lock:
             if self._shutdown:
                 raise RuntimeError("cannot schedule new futures after shutdown")
 
-            future: asyncio.Future[T] = asyncio.Future()
-            await self._work_queue.put((future, partial(fn, *args, **kwargs)))
+            await self._work_queue.put((future, awaitable))
             await self._adjust_task_count()
             return future
 
     async def map[T](
         self,
         fn: Callable[..., Awaitable[T]],
-        *iterables: object,
+        *iterables: Iterable[Any],
     ) -> AsyncGenerator[T]:
         fs = await asyncio.gather(
             *(self.submit(fn, *args) for args in zip(*iterables, strict=False))
@@ -131,11 +153,11 @@ async def _worker(work_queue: _WorkQueue, idle_semaphore: asyncio.Semaphore) -> 
         del work_item
 
 
-async def _run[T](future: asyncio.Future[T], fn: Callable[[], Awaitable[T]]) -> None:
+async def _run[T](future: asyncio.Future[T], awaitable: Awaitable[T]) -> None:
     if future.cancelled():
         return
     try:
-        result = await _shielded_run(fn)
+        result = await awaitable
     except asyncio.CancelledError:
         future.cancel()
     except BaseException as exc:  # noqa: BLE001
@@ -148,14 +170,21 @@ async def _run[T](future: asyncio.Future[T], fn: Callable[[], Awaitable[T]]) -> 
             future.set_result(result)
 
 
-async def _shielded_run[T](fn: Callable[[], Awaitable[T]]) -> T:
+async def _shielded_run_coro[T, **P](
+    fn: Callable[P, Awaitable[T]], /, *args: P.args, **kwargs: P.kwargs
+) -> T:
     try:
-        return await fn()
+        return await fn(*args, **kwargs)
     except asyncio.CancelledError:
         # Retry only if the _worker is cancelling (as opposed to fn raising)
         if _current_task_cancelling():
-            return await fn()
+            return await fn(*args, **kwargs)
         raise
+
+
+def _close_unawaited_coro(coro: Coroutine[Any, Any, Any]) -> None:
+    if inspect.getcoroutinestate(coro) == inspect.CORO_CREATED:
+        coro.close()
 
 
 def _current_task_cancelling() -> bool:

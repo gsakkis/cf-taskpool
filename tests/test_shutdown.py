@@ -7,7 +7,7 @@ from test.support.script_helper import assert_python_ok
 
 from cf_taskpool import TaskPoolExecutor
 
-from . import aabs, amul
+from . import aabs, amul, submit
 
 
 def assert_run_taskpool_executor(expected_out, transient, shutdown=None):
@@ -37,30 +37,31 @@ if __name__ == "__main__":
 
 
 class TestTaskPoolShutdown:
-    async def test_run_after_shutdown(self, executor):
+    @pytest.mark.parametrize("as_awaitable", [False, True])
+    async def test_run_after_shutdown(self, executor, as_awaitable):
         await executor.shutdown()
         with pytest.raises(RuntimeError):
-            await executor.submit(amul, 2, 5)
+            await submit(executor, as_awaitable, amul, 2, 5)
 
-    async def test_hang_issue12364(self, executor):
-        fs = [await executor.submit(asyncio.sleep, 0.1) for _ in range(50)]
-        await executor.shutdown()
-        for f in fs:
-            await f
+    @pytest.mark.parametrize("as_awaitable", [False, True])
+    @pytest.mark.parametrize("cancel_futures", [False, True])
+    async def test_shutdown(self, executor, as_awaitable, cancel_futures):
+        fs = [
+            await submit(executor, as_awaitable, asyncio.sleep, 0.1) for _ in range(50)
+        ]
+        await executor.shutdown(cancel_futures=cancel_futures)
 
-    async def test_cancel_futures(self):
-        executor = TaskPoolExecutor(max_workers=5)
-        fs = [await executor.submit(asyncio.sleep, 0.1) for _ in range(50)]
-        await executor.shutdown(cancel_futures=True)
-        # 5 tasks were picked by the workers before the shutdown, 45 were cancelled
         cancelled = [fut for fut in fs if fut.cancelled()]
-        assert len(cancelled) == 45
-
-        # Ensure the other futures were able to finish.
-        # Use "not fut.cancelled()" instead of "fut.done()" to include futures
-        # that may have been left in a pending state.
         others = [fut for fut in fs if not fut.cancelled()]
-        assert len(others) == 5
+        if cancel_futures:
+            # 5 tasks were picked by the workers before the shutdown, 45 were cancelled
+            assert len(cancelled) == 45
+            assert len(others) == 5
+        else:
+            # No tasks were cancelled
+            assert len(cancelled) == 0
+            assert len(others) == 50
+
         for fut in others:
             assert fut.done()
             assert fut.exception() is None
@@ -68,7 +69,8 @@ class TestTaskPoolShutdown:
     @pytest.mark.skipif(
         not hasattr(signal, "alarm"), reason="signal.alarm not available"
     )
-    async def test_hang_gh94440(self):
+    @pytest.mark.parametrize("as_awaitable", [False, True])
+    async def test_hang_gh94440(self, as_awaitable):
         """shutdown(wait=True) doesn't hang when a future was submitted and
         quickly canceled right before shutdown.
 
@@ -79,25 +81,26 @@ class TestTaskPoolShutdown:
             raise RuntimeError("timed out waiting for shutdown")  # pragma: no cover
 
         executor = TaskPoolExecutor(max_workers=1)
-        future = await executor.submit(amul, 2, 5)
+        future = await submit(executor, as_awaitable, amul, 2, 5)
         await future
         old_handler = signal.signal(signal.SIGALRM, timeout)
         try:
             signal.alarm(5)
-            future = await executor.submit(amul, 2, 5)
+            future = await submit(executor, as_awaitable, amul, 2, 5)
             future.cancel()
             await executor.shutdown(wait=True)
         finally:
             signal.alarm(0)
             signal.signal(signal.SIGALRM, old_handler)
 
-    async def test_tasks_terminate(self, executor):
+    @pytest.mark.parametrize("as_awaitable", [False, True])
+    async def test_tasks_terminate(self, executor, as_awaitable):
         async def acquire_lock(lock):
             await lock.acquire()
 
         sem = asyncio.Semaphore(0)
         for _ in range(3):
-            await executor.submit(acquire_lock, sem)
+            await submit(executor, as_awaitable, acquire_lock, sem)
         assert len(executor._tasks) == 3
         for _ in range(3):
             sem.release()
@@ -110,9 +113,11 @@ class TestTaskPoolShutdown:
             assert mapped_abs == list(map(abs, range(-4, 4)))
         assert all(t.done() for t in executor._tasks)
 
+    @pytest.mark.parametrize("as_awaitable", [False, True])
     @pytest.mark.parametrize("explicit_shutdown", [False, True])
-    async def test_shutdown_no_wait(self, explicit_shutdown):
+    async def test_shutdown_no_wait(self, as_awaitable, explicit_shutdown):
         executor = TaskPoolExecutor(max_workers=5)
+        future = await submit(executor, as_awaitable, amul, 2, 5)
         res = await executor.map(aabs, range(-5, 5))
         tasks = executor._tasks
         if explicit_shutdown:
@@ -121,10 +126,11 @@ class TestTaskPoolShutdown:
             del executor
 
         assert all(not t.done() for t in tasks)
-        await asyncio.wait(tasks)
+        await asyncio.wait(tasks, timeout=1)
         assert all(t.done() for t in tasks)
 
         # Make sure the results were all computed before the executor got shutdown
+        assert future.result() == 10
         mapped_abs = [x async for x in res]
         assert all(r == abs(v) for r, v in zip(mapped_abs, range(-5, 5), strict=True))
 

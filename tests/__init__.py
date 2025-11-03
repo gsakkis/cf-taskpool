@@ -1,4 +1,7 @@
 import asyncio
+from collections.abc import Awaitable, Callable
+
+from cf_taskpool import TaskPoolExecutor
 
 Future = asyncio.Future[object]
 
@@ -19,6 +22,18 @@ def successful_future():
     f = Future()
     f.set_result(42)
     return f
+
+
+def submit[R, **P](
+    executor: TaskPoolExecutor,
+    as_awaitable: bool,  # noqa: FBT001
+    func: Callable[P, Awaitable[R]],
+    *args: P.args,
+    **kwargs: P.kwargs,
+) -> Awaitable[asyncio.Future[R]]:
+    if as_awaitable:
+        return executor.submit(func(*args, **kwargs))
+    return executor.submit(func, *args, **kwargs)
 
 
 async def aabs(x):

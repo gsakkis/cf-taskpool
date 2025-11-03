@@ -155,5 +155,9 @@ class TestTaskPoolShutdown:
     @pytest.mark.parametrize("cancel_futures", [True, False])
     def test_interpreter_shutdown(self, transient, wait, cancel_futures):
         shutdown = {"wait": wait, "cancel_futures": cancel_futures}
-        expected = b"apple" if wait and not cancel_futures else b""
+        expected = b"apple" if not cancel_futures else b""
         assert_run_taskpool_executor(expected, transient=transient, shutdown=shutdown)
+
+    @pytest.mark.parametrize("transient", [True, False])
+    def test_interpreter_shutdown_without_executor_shutdown(self, transient):
+        assert_run_taskpool_executor(b"apple", transient=transient)

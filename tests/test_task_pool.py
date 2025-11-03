@@ -18,6 +18,13 @@ async def adivmod(x, y):
     return divmod(x, y)
 
 
+async def adivmod_cancel(x, y):
+    await asyncio.sleep(0.01)
+    if y == 0:
+        raise asyncio.CancelledError
+    return divmod(x, y)
+
+
 async def acapture(*args, **kwargs):
     await asyncio.sleep(0.01)
     return args, kwargs
@@ -68,16 +75,32 @@ class TestTaskPoolExecutor:
         with pytest.raises(TypeError):
             await executor.submit(arg=1)
 
+    async def test_exception(self, executor):
+        future = await executor.submit(adivmod, 2, 0)
+        with pytest.raises(ZeroDivisionError) as exc_info:
+            await future
+        assert future.exception() is exc_info.value
+
+    async def test_cancellation(self, executor):
+        future = await executor.submit(adivmod_cancel, 2, 0)
+        with pytest.raises(asyncio.CancelledError):
+            await future
+        assert future.cancelled()
+
     async def test_map(self, executor):
         expected = await asyncio.gather(*map(amul, range(10), range(10)))
         agen = await executor.map(amul, range(10), range(10))
         assert [x async for x in agen] == expected
 
-    async def test_map_exception(self, executor):
-        agen = await executor.map(adivmod, [1, 1, 1, 1], [2, 3, 0, 5])
+    @pytest.mark.parametrize(
+        ("func", "exc_type"),
+        [(adivmod, ZeroDivisionError), (adivmod_cancel, asyncio.CancelledError)],
+    )
+    async def test_map_exception(self, executor, func, exc_type):
+        agen = await executor.map(func, [1, 1, 1, 1], [2, 3, 0, 5])
         assert await agen.__anext__() == (0, 1)
         assert await agen.__anext__() == (0, 1)
-        with pytest.raises(ZeroDivisionError):
+        with pytest.raises(exc_type):
             await agen.__anext__()
 
     async def test_no_stale_references(self, executor):

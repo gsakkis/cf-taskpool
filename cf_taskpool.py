@@ -116,6 +116,8 @@ async def _worker(work_queue: _WorkQueue, idle_semaphore: asyncio.Semaphore) -> 
         try:
             work_item = work_queue.get_nowait()
         except asyncio.QueueEmpty:
+            if _current_task_cancelling():
+                break
             # Attempt to increment idle count if queue is empty
             idle_semaphore.release()
             work_item = await work_queue.get()
@@ -133,7 +135,9 @@ async def _run[T](future: asyncio.Future[T], fn: Callable[[], Awaitable[T]]) -> 
     if future.cancelled():
         return
     try:
-        result = await fn()
+        result = await _shielded_run(fn)
+    except asyncio.CancelledError:
+        future.cancel()
     except BaseException as exc:  # noqa: BLE001
         if not future.cancelled():
             future.set_exception(exc)
@@ -142,3 +146,18 @@ async def _run[T](future: asyncio.Future[T], fn: Callable[[], Awaitable[T]]) -> 
     else:
         if not future.cancelled():
             future.set_result(result)
+
+
+async def _shielded_run[T](fn: Callable[[], Awaitable[T]]) -> T:
+    try:
+        return await fn()
+    except asyncio.CancelledError:
+        # Retry only if the _worker is cancelling (as opposed to fn raising)
+        if _current_task_cancelling():
+            return await fn()
+        raise
+
+
+def _current_task_cancelling() -> bool:
+    current_task = asyncio.current_task()
+    return current_task is not None and current_task.cancelling() > 0

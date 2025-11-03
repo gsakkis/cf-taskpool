@@ -2,10 +2,10 @@ import asyncio
 import contextlib
 import itertools
 import os
+import weakref
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from functools import partial
 from typing import Any, Self
-from weakref import ref
 
 type _WorkItem[T] = tuple[asyncio.Future[T], Callable[[], Awaitable[T]]]
 type _WorkQueue = asyncio.Queue[_WorkItem[Any] | None]
@@ -100,24 +100,24 @@ class TaskPoolExecutor:
 
         num_tasks = len(self._tasks)
         if num_tasks < self._max_workers:
-            work_queue = self._work_queue
-            # When the executor gets lost, the weakref callback will wake up the workers
-            self_ref = ref(self, lambda _: work_queue.put_nowait(None))
-            name = f"{self._name_prefix}_{num_tasks}"
-            task = asyncio.create_task(_worker(self_ref, work_queue), name=name)
-            self._tasks.add(task)
+            # When the executor gets garbage collected, put None into the work queue to
+            # wake up the worker tasks
+            weakref.finalize(self, self._work_queue.put_nowait, None)
+            self._tasks.add(
+                asyncio.create_task(
+                    coro=_worker(self._work_queue, self._idle_semaphore),
+                    name=f"{self._name_prefix}_{num_tasks}",
+                )
+            )
 
 
-async def _worker(executor_ref: ref[TaskPoolExecutor], work_queue: _WorkQueue) -> None:
+async def _worker(work_queue: _WorkQueue, idle_semaphore: asyncio.Semaphore) -> None:
     while True:
         try:
             work_item = work_queue.get_nowait()
         except asyncio.QueueEmpty:
             # Attempt to increment idle count if queue is empty
-            executor = executor_ref()
-            if executor is not None:
-                executor._idle_semaphore.release()  # noqa: SLF001
-            del executor
+            idle_semaphore.release()
             work_item = await work_queue.get()
 
         # The executor that owns the worker has been shutdown or collected

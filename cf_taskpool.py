@@ -3,8 +3,12 @@ import contextlib
 import itertools
 import os
 from collections.abc import AsyncGenerator, Awaitable, Callable
+from functools import partial
 from typing import Any, Self
 from weakref import ref
+
+type _WorkItem[T] = tuple[asyncio.Future[T], Callable[[], Awaitable[T]]]
+type _WorkQueue = asyncio.Queue[_WorkItem[Any] | None]
 
 
 class TaskPoolExecutor:
@@ -17,7 +21,7 @@ class TaskPoolExecutor:
         if max_workers <= 0:
             raise ValueError("max_workers must be greater than 0")
         self._max_workers = max_workers
-        self._work_queue: asyncio.Queue[_WorkItem[Any] | None] = asyncio.Queue()
+        self._work_queue: _WorkQueue = asyncio.Queue()
         self._idle_semaphore = asyncio.Semaphore(0)
         self._tasks: set[asyncio.Task[None]] = set()
         self._shutdown = False
@@ -37,10 +41,10 @@ class TaskPoolExecutor:
             if self._shutdown:
                 raise RuntimeError("cannot schedule new futures after shutdown")
 
-            work_item = _WorkItem(fn, args, kwargs)
-            await self._work_queue.put(work_item)
+            future: asyncio.Future[T] = asyncio.Future()
+            await self._work_queue.put((future, partial(fn, *args, **kwargs)))
             await self._adjust_task_count()
-            return work_item.future
+            return future
 
     async def map[T](
         self,
@@ -59,7 +63,7 @@ class TaskPoolExecutor:
                 fs.reverse()
                 while fs:
                     # Careful not to keep a reference to the popped future
-                    yield await _result_or_cancel(fs.pop())
+                    yield await fs.pop()
             finally:
                 for future in fs:
                     future.cancel()
@@ -78,8 +82,8 @@ class TaskPoolExecutor:
                         work_item = self._work_queue.get_nowait()
                     except asyncio.QueueEmpty:
                         break
-                    if work_item is not None and work_item.future is not None:
-                        work_item.future.cancel()
+                    if work_item is not None:
+                        work_item[0].cancel()
 
             # Send a wake-up to prevent tasks from permanently blocking
             await self._work_queue.put(None)
@@ -103,53 +107,25 @@ class TaskPoolExecutor:
             self._tasks.add(task)
 
 
-class _WorkItem[T]:
-    def __init__(
-        self,
-        fn: Callable[..., Awaitable[T]],
-        args: tuple[object, ...],
-        kwargs: dict[str, object],
-    ):
-        self.future: asyncio.Future[T] = asyncio.Future()
-        self.fn = fn
-        self.args = args
-        self.kwargs = kwargs
-
-    async def run(self) -> None:
-        if not self.future.cancelled():
-            try:
-                self.future.set_result(await self.fn(*self.args, **self.kwargs))
-            except BaseException as exc:  # noqa: BLE001
-                if isinstance(exc, asyncio.CancelledError):
-                    self.future.cancel()
-                else:
-                    self.future.set_exception(exc)
-                # Break a reference cycle with the exception 'exc'
-                del self
-
-
-async def _worker(
-    executor_reference: ref[TaskPoolExecutor],
-    work_queue: asyncio.Queue[_WorkItem[Any] | None],
-) -> None:
+async def _worker(executor_ref: ref[TaskPoolExecutor], work_queue: _WorkQueue) -> None:
     while True:
         try:
             work_item = work_queue.get_nowait()
         except asyncio.QueueEmpty:
             # Attempt to increment idle count if queue is empty
-            executor = executor_reference()
+            executor = executor_ref()
             if executor is not None:
                 executor._idle_semaphore.release()  # noqa: SLF001
             del executor
             work_item = await work_queue.get()
 
         if work_item is not None:
-            await work_item.run()
+            await _run(*work_item)
             # Delete references to object. See GH-60488
             del work_item
             continue
 
-        executor = executor_reference()
+        executor = executor_ref()
         # Exit if the executor that owns the worker has been collected or shutdown
         if executor is None or executor._shutdown:  # noqa: SLF001
             # Notice other workers
@@ -158,12 +134,16 @@ async def _worker(
         del executor
 
 
-async def _result_or_cancel[T](fut: asyncio.Future[T]) -> T:
+async def _run[T](future: asyncio.Future[T], fn: Callable[[], Awaitable[T]]) -> None:
+    if future.cancelled():
+        return
     try:
-        try:
-            return await fut
-        finally:
-            fut.cancel()
-    finally:
-        # Break a reference cycle with the exception in self._exception
-        del fut
+        result = await fn()
+    except BaseException as exc:  # noqa: BLE001
+        if not future.cancelled():
+            future.set_exception(exc)
+            # Break a reference cycle with the exception 'exc'
+            del future
+    else:
+        if not future.cancelled():
+            future.set_result(result)

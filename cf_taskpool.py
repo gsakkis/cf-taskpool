@@ -86,7 +86,8 @@ class TaskPoolExecutor:
                         work_item[0].cancel()
 
             # Send a wake-up to prevent tasks from permanently blocking
-            await self._work_queue.put(None)
+            for _ in self._tasks:
+                await self._work_queue.put(None)
         if wait and self._tasks:
             await asyncio.wait(self._tasks)
 
@@ -119,19 +120,13 @@ async def _worker(executor_ref: ref[TaskPoolExecutor], work_queue: _WorkQueue) -
             del executor
             work_item = await work_queue.get()
 
-        if work_item is not None:
-            await _run(*work_item)
-            # Delete references to object. See GH-60488
-            del work_item
-            continue
+        # The executor that owns the worker has been shutdown or collected
+        if work_item is None:
+            break
 
-        executor = executor_ref()
-        # Exit if the executor that owns the worker has been collected or shutdown
-        if executor is None or executor._shutdown:  # noqa: SLF001
-            # Notice other workers
-            await work_queue.put(None)
-            return
-        del executor
+        await _run(*work_item)
+        # Delete references to object. See GH-60488
+        del work_item
 
 
 async def _run[T](future: asyncio.Future[T], fn: Callable[[], Awaitable[T]]) -> None:

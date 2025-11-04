@@ -5,9 +5,12 @@ import itertools
 import os
 import weakref
 from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Iterable
-from typing import Any, Self, overload
+from typing import Any, ParamSpec, Self, TypeVar, overload
 
 _WorkQueue = asyncio.Queue[tuple[asyncio.Future[Any], Awaitable[Any]] | None]
+
+T = TypeVar("T")
+P = ParamSpec("P")
 
 
 class TaskPoolExecutor:
@@ -34,14 +37,14 @@ class TaskPoolExecutor:
         await self.shutdown()
 
     @overload
-    async def submit[T, **P](
+    async def submit(
         self, fn: Callable[P, Awaitable[T]], /, *args: P.args, **kwargs: P.kwargs
     ) -> asyncio.Future[T]: ...
 
     @overload
-    async def submit[T](self, aw: Awaitable[T], /) -> asyncio.Future[T]: ...
+    async def submit(self, aw: Awaitable[T], /) -> asyncio.Future[T]: ...
 
-    async def submit[T, **P](
+    async def submit(
         self,
         aw_or_fn: Callable[P, Awaitable[T]] | Awaitable[T],
         /,
@@ -68,7 +71,7 @@ class TaskPoolExecutor:
             await self._adjust_task_count()
             return future
 
-    async def map[T](
+    async def map(
         self,
         fn: Callable[..., Awaitable[T]],
         *iterables: Iterable[Any],
@@ -153,7 +156,7 @@ async def _worker(work_queue: _WorkQueue, idle_semaphore: asyncio.Semaphore) -> 
         del work_item
 
 
-async def _run[T](future: asyncio.Future[T], awaitable: Awaitable[T]) -> None:
+async def _run(future: asyncio.Future[T], awaitable: Awaitable[T]) -> None:
     if future.cancelled():
         return
     try:
@@ -170,7 +173,7 @@ async def _run[T](future: asyncio.Future[T], awaitable: Awaitable[T]) -> None:
             future.set_result(result)
 
 
-async def _shielded_run_coro[T, **P](
+async def _shielded_run_coro(
     fn: Callable[P, Awaitable[T]], /, *args: P.args, **kwargs: P.kwargs
 ) -> T:
     try:

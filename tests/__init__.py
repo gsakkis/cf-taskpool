@@ -1,8 +1,11 @@
 import asyncio
 from collections.abc import Awaitable, Callable
+from typing import ParamSpec, TypeVar
 
 from cf_taskpool import TaskPoolExecutor
 
+T = TypeVar("T")
+P = ParamSpec("P")
 Future = asyncio.Future[object]
 
 
@@ -24,13 +27,13 @@ def successful_future():
     return f
 
 
-def submit[R, **P](
+def submit(
     executor: TaskPoolExecutor,
     as_awaitable: bool,  # noqa: FBT001
-    func: Callable[P, Awaitable[R]],
+    func: Callable[P, Awaitable[T]],
     *args: P.args,
     **kwargs: P.kwargs,
-) -> Awaitable[asyncio.Future[R]]:
+) -> Awaitable[asyncio.Future[T]]:
     if as_awaitable:
         return executor.submit(func(*args, **kwargs))
     return executor.submit(func, *args, **kwargs)

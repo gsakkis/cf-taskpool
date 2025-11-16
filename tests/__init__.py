@@ -39,6 +39,11 @@ def submit(
     return executor.submit(func, *args, **kwargs)
 
 
+async def astr(x):
+    await asyncio.sleep(0.01)
+    return str(x)
+
+
 async def aabs(x):
     await asyncio.sleep(0.01)
     return abs(x)

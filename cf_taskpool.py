@@ -1,9 +1,10 @@
 import asyncio
 import contextlib
 import inspect
-import itertools
+import itertools as it
 import os
 import weakref
+from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Iterable
 from typing import Any, ParamSpec, Self, TypeVar, overload
 
@@ -15,7 +16,7 @@ P = ParamSpec("P")
 
 class TaskPoolExecutor:
     # Used to assign unique task names when task_name_prefix is not supplied
-    _counter = itertools.count().__next__
+    _counter = it.count().__next__
 
     def __init__(self, max_workers: int | None = None, task_name_prefix: str = ""):
         if max_workers is None:
@@ -75,10 +76,25 @@ class TaskPoolExecutor:
         self,
         fn: Callable[..., Awaitable[T]],
         *iterables: Iterable[Any],
+        buffersize: int | None = None,
     ) -> AsyncGenerator[T]:
-        fs = await asyncio.gather(
-            *(self.submit(fn, *args) for args in zip(*iterables, strict=False))
-        )
+        if buffersize is not None:
+            if not isinstance(buffersize, int):
+                raise TypeError("buffersize must be an integer or None")
+            if buffersize < 1:
+                raise ValueError("buffersize must be None or > 0")
+
+        zipped_iterables = zip(*iterables, strict=False)
+        submissions = (self.submit(fn, *args) for args in zipped_iterables)
+        fs: list[asyncio.Future[T]] | deque[asyncio.Future[T]]
+        if buffersize is None:
+            fs = await asyncio.gather(*submissions)
+        else:
+            fs = fsd = deque(await asyncio.gather(*it.islice(submissions, buffersize)))
+
+        # Use a weak reference to ensure that the executor can be garbage
+        # collected independently of the result_iterator closure.
+        executor_weakref = weakref.ref(self)
 
         # Yield must be hidden in closure so that the futures are submitted
         # before the first iterator value is required.
@@ -87,6 +103,13 @@ class TaskPoolExecutor:
                 # Reverse to keep finishing order
                 fs.reverse()
                 while fs:
+                    if (
+                        buffersize is not None
+                        and (executor := executor_weakref())
+                        and (args := next(zipped_iterables, None))
+                    ):
+                        fsd.appendleft(await executor.submit(fn, *args))
+
                     # Careful not to keep a reference to the popped future
                     yield await fs.pop()
             finally:

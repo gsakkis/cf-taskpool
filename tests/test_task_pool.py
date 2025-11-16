@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import itertools as it
 import os
 import weakref
 from functools import partial
@@ -8,7 +9,7 @@ import pytest
 
 from cf_taskpool import TaskPoolExecutor
 
-from . import adivmod, amul, submit
+from . import adivmod, amul, astr, submit
 
 
 class MyObject:
@@ -122,6 +123,54 @@ class TestTaskPoolExecutor:
         assert await agen.__anext__() == (0, 1)
         with pytest.raises(exc_type):
             await agen.__anext__()
+
+    @pytest.mark.parametrize(
+        ("buffersize", "exc_type"),
+        [("foo", TypeError), (2.0, TypeError), (0, ValueError), (-1, ValueError)],
+    )
+    async def test_map_buffersize_validation(self, executor, buffersize, exc_type):
+        with pytest.raises(exc_type):
+            await executor.map(astr, range(4), buffersize=buffersize)
+
+    @pytest.mark.parametrize("buffersize", [1, 2, 4, 8])
+    async def test_map_buffersize(self, executor, buffersize):
+        ints = range(4)
+        agen = await executor.map(astr, ints, buffersize=buffersize)
+        assert [x async for x in agen] == ["0", "1", "2", "3"]
+
+    @pytest.mark.parametrize("buffersize", [1, 2, 4, 8])
+    async def test_map_buffersize_on_multiple_iterables(self, executor, buffersize):
+        ints = range(4)
+        agen = await executor.map(amul, ints, ints, buffersize=buffersize)
+        assert [x async for x in agen] == [0, 1, 4, 9]
+
+    async def test_map_buffersize_on_infinite_iterable(self, executor):
+        agen = await executor.map(astr, it.count(), buffersize=2)
+        assert await anext(agen, None) == "0"
+        assert await anext(agen, None) == "1"
+        assert await anext(agen, None) == "2"
+
+    async def test_map_buffersize_on_multiple_infinite_iterables(self, executor):
+        agen = await executor.map(amul, it.count(), it.count(), buffersize=2)
+        assert await anext(agen, None) == 0
+        assert await anext(agen, None) == 1
+        assert await anext(agen, None) == 4
+        assert await anext(agen, None) == 9
+
+    async def test_map_buffersize_on_empty_iterable(self, executor):
+        agen = await executor.map(str, [], buffersize=2)
+        assert await anext(agen, None) is None
+
+    async def test_map_buffersize_without_iterable(self, executor):
+        agen = await executor.map(str, buffersize=2)
+        assert await anext(agen, None) is None
+
+    async def test_map_buffersize_when_buffer_is_full(self, executor):
+        ints = iter(range(4))
+        buffersize = 2
+        await executor.map(astr, ints, buffersize=buffersize)
+        await executor.shutdown(wait=True)  # wait for tasks to complete
+        assert next(ints) == buffersize
 
     @pytest.mark.parametrize("as_awaitable", [False, True])
     async def test_no_stale_references(self, executor, as_awaitable):

@@ -4,14 +4,32 @@ requires = ["setuptools>=67", "wheel"]
 
 [project]
 name = "cf-taskpool"
-version = "0.0.1"
+version = "0.1.0"
 description = "A concurrent.futures-like API for executing coroutines using a pool of tasks"
 readme = {file = "README.md", content-type = "text/markdown"}
+authors = [{name = "George Sakkis", email = "george.sakkis@gmail.com"}]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Framework :: AsyncIO",
+]
+keywords = ["asyncio", "concurrent", "executor", "task-pool", "async"]
 requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-asyncio", "pytest-cov"]
+
+[project.urls]
+Repository = "https://github.com/gsakkis/cf-taskpool"
+Issues = "https://github.com/gsakkis/cf-taskpool/issues"
 
 [tool.setuptools]
 py-modules = ["cf_taskpool"]

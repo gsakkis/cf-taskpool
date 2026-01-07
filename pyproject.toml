@@ -39,7 +39,7 @@ asyncio_mode = "auto"
 asyncio_default_test_loop_scope = "function"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = ["error"]
-addopts = "-v --cov-report=term-missing:skip-covered"
+addopts = "--cov=cf_taskpool --cov-report=term-missing"
 
 [tool.coverage.run]
 patch = ["subprocess"]

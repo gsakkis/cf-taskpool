@@ -50,21 +50,13 @@ class TestTaskPoolShutdown:
             await submit(executor, as_awaitable, asyncio.sleep, 0.1) for _ in range(50)
         ]
         await executor.shutdown(cancel_futures=cancel_futures)
-
-        cancelled = [fut for fut in fs if fut.cancelled()]
-        others = [fut for fut in fs if not fut.cancelled()]
         if cancel_futures:
-            # 5 tasks were picked by the workers before the shutdown, 45 were cancelled
-            assert len(cancelled) == 45
-            assert len(others) == 5
+            # All tasks were cancelled
+            assert all(fut.cancelled() for fut in fs)
         else:
-            # No tasks were cancelled
-            assert len(cancelled) == 0
-            assert len(others) == 50
-
-        for fut in others:
-            assert fut.done()
-            assert fut.exception() is None
+            # All tasks were completed
+            assert all(fut.done() for fut in fs)
+            assert all(fut.result() is None for fut in fs)
 
     @pytest.mark.skipif(
         not hasattr(signal, "alarm"), reason="signal.alarm not available"

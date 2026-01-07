@@ -1,5 +1,4 @@
 import asyncio
-import contextlib
 import inspect
 import itertools as it
 import os
@@ -69,7 +68,7 @@ class TaskPoolExecutor:
                 raise RuntimeError("cannot schedule new futures after shutdown")
 
             await self._work_queue.put((future, awaitable))
-            await self._adjust_task_count()
+            self._adjust_task_count()
             return future
 
     async def map(
@@ -139,12 +138,11 @@ class TaskPoolExecutor:
         if wait and self._tasks:
             await asyncio.wait(self._tasks)
 
-    async def _adjust_task_count(self) -> None:
+    def _adjust_task_count(self) -> None:
         # If idle workers are available, don't spin new ones
-        with contextlib.suppress(TimeoutError):
-            async with asyncio.timeout(0):
-                if await self._idle_semaphore.acquire():
-                    return
+        if not self._idle_semaphore.locked():
+            self._idle_semaphore._value -= 1  # noqa: SLF001
+            return
 
         num_tasks = len(self._tasks)
         if num_tasks < self._max_workers:

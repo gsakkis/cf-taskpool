@@ -12,8 +12,8 @@ class TestTaskPoolAsCompleted:
         future_c = cancelled_future()
         future_e = exception_future()
         future_s = successful_future()
-        future1 = await executor.submit(amul, 2, 21)
-        future2 = await executor.submit(amul, 7, 6)
+        future1 = executor.submit(amul, 2, 21)
+        future2 = executor.submit(amul, 7, 6)
 
         coros = list(
             asyncio.as_completed([future_c, future_e, future_s, future1, future2])
@@ -34,7 +34,7 @@ class TestTaskPoolAsCompleted:
             successful_future(),
         }
         # Windows clock resolution is around 15.6 ms
-        future = await executor.submit(asyncio.sleep, 1.0)
+        future = executor.submit(asyncio.sleep, 1.0)
         results = []
         exception_types = set()
         for coro in asyncio.as_completed(already_completed | {future}, timeout=timeout):
@@ -52,7 +52,7 @@ class TestTaskPoolAsCompleted:
         # Issue 20367. Duplicate futures should not raise exceptions or give duplicate
         # responses.
         # Issue #31641: accept arbitrary iterables.
-        future1 = await executor.submit(asyncio.sleep, 0.1)
+        future1 = executor.submit(asyncio.sleep, 0.1)
         results = [
             await coro for coro in asyncio.as_completed(itertools.repeat(future1, 3))
         ]

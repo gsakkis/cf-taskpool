@@ -39,7 +39,7 @@ class FalseyLenError(Exception):
 class TestTaskPoolExecutor:
     @pytest.mark.parametrize("as_awaitable", [False, True])
     async def test_submit(self, executor, as_awaitable):
-        future = await submit(executor, as_awaitable, amul, 2, 8)
+        future = submit(executor, as_awaitable, amul, 2, 8)
         assert await future == 16
         assert future.result() == 16
 
@@ -49,11 +49,11 @@ class TestTaskPoolExecutor:
             await asyncio.sleep(0.01)
             return args, kwargs
 
-        future = await submit(executor, as_awaitable, amul, 2, y=8)
+        future = submit(executor, as_awaitable, amul, 2, y=8)
         assert await future == 16
         assert future.result() == 16
 
-        future = await submit(executor, as_awaitable, acapture, 1, self=2, fn=3)
+        future = submit(executor, as_awaitable, acapture, 1, self=2, fn=3)
         assert await future == ((1,), {"self": 2, "fn": 3})
         assert future.result() == ((1,), {"self": 2, "fn": 3})
 
@@ -85,22 +85,20 @@ class TestTaskPoolExecutor:
         coro = amul(2, 8)
         try:
             with pytest.raises(TypeError, match=error):
-                await executor.submit(coro, *args, **kwargs)
+                executor.submit(coro, *args, **kwargs)
         finally:
             coro.close()
 
     @pytest.mark.parametrize("as_awaitable", [False, True])
     async def test_exception(self, executor, as_awaitable):
-        future = await submit(executor, as_awaitable, adivmod, 2, 0)
+        future = submit(executor, as_awaitable, adivmod, 2, 0)
         with pytest.raises(ZeroDivisionError) as exc_info:
             await future
         assert future.exception() is exc_info.value
 
     @pytest.mark.parametrize("as_awaitable", [False, True])
     async def test_cancellation(self, executor, as_awaitable):
-        future = await submit(
-            executor, as_awaitable, adivmod, 2, 0, cancel_if_zero=True
-        )
+        future = submit(executor, as_awaitable, adivmod, 2, 0, cancel_if_zero=True)
         with pytest.raises(asyncio.CancelledError):
             await future
         assert future.cancelled()
@@ -180,7 +178,7 @@ class TestTaskPoolExecutor:
         my_object_collected = asyncio.Event()
         my_object_callback = weakref.ref(my_object, lambda _: my_object_collected.set())
         # Deliberately discarding the future.
-        await submit(executor, as_awaitable, my_object.my_method)
+        submit(executor, as_awaitable, my_object.my_method)
         del my_object
         try:
             await asyncio.wait_for(my_object_collected.wait(), timeout=1.0)
@@ -195,7 +193,7 @@ class TestTaskPoolExecutor:
 
     @pytest.mark.parametrize("as_awaitable", [False, True])
     async def test_free_future_reference(self, executor, as_awaitable):
-        future = await submit(executor, as_awaitable, MyObject.create, 1)
+        future = submit(executor, as_awaitable, MyObject.create, 1)
         await future
 
         wr = weakref.ref(future)
@@ -228,7 +226,7 @@ class TestTaskPoolExecutor:
             raise exception
 
         msg = "falsy"
-        future = await submit(executor, as_awaitable, araise, exc_type(msg))
+        future = submit(executor, as_awaitable, araise, exc_type(msg))
         with pytest.raises(exc_type, match=msg):
             await future
 
@@ -251,16 +249,16 @@ class TestTaskPoolExecutor:
     async def test_saturation(self, executor, as_awaitable):
         sem = asyncio.Semaphore(0)
         for _ in range(15 * executor._max_workers):
-            await submit(executor, as_awaitable, sem.acquire)
+            submit(executor, as_awaitable, sem.acquire)
         assert len(executor._tasks) == executor._max_workers
         for _ in range(15 * executor._max_workers):
             sem.release()
 
     @pytest.mark.parametrize("as_awaitable", [False, True])
     async def test_idle_worker_reuse(self, executor, as_awaitable):
-        assert await (await submit(executor, as_awaitable, amul, 21, 2)) == 42
-        assert await (await submit(executor, as_awaitable, amul, 6, 7)) == 42
-        assert await (await submit(executor, as_awaitable, amul, 3, 14)) == 42
+        assert await submit(executor, as_awaitable, amul, 21, 2) == 42
+        assert await submit(executor, as_awaitable, amul, 6, 7) == 42
+        assert await submit(executor, as_awaitable, amul, 3, 14) == 42
         assert len(executor._tasks) == 1
 
     @pytest.mark.parametrize("as_awaitable", [False, True])
@@ -277,7 +275,7 @@ class TestTaskPoolExecutor:
 
         async with TaskPoolExecutor(max_workers=1) as executor:
             # submit work to saturate the pool
-            fut = await submit(executor, as_awaitable, log_n_wait, ident="first")
+            fut = submit(executor, as_awaitable, log_n_wait, ident="first")
             try:
                 agen = await executor.map(log_n_wait, ["second", "third"])
                 with pytest.raises(TimeoutError):

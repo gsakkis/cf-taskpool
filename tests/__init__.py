@@ -33,7 +33,7 @@ def submit(
     func: Callable[P, Awaitable[T]],
     *args: P.args,
     **kwargs: P.kwargs,
-) -> Awaitable[asyncio.Future[T]]:
+) -> asyncio.Future[T]:
     if as_awaitable:
         return executor.submit(func(*args, **kwargs))
     return executor.submit(func, *args, **kwargs)

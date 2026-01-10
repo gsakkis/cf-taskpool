@@ -20,7 +20,7 @@ async def sleep_and_print(t, msg):
     print(msg)
 
 async def main(executor):
-    await executor.submit(sleep_and_print, 0.1, "apple")
+    executor.submit(sleep_and_print, 0.1, "apple")
     if {shutdown} is not None:
         await executor.shutdown(**{shutdown})
 
@@ -41,30 +41,20 @@ class TestTaskPoolShutdown:
     async def test_run_after_shutdown(self, executor, as_awaitable):
         await executor.shutdown()
         with pytest.raises(RuntimeError):
-            await submit(executor, as_awaitable, amul, 2, 5)
+            submit(executor, as_awaitable, amul, 2, 5)
 
     @pytest.mark.parametrize("as_awaitable", [False, True])
     @pytest.mark.parametrize("cancel_futures", [False, True])
     async def test_shutdown(self, executor, as_awaitable, cancel_futures):
-        fs = [
-            await submit(executor, as_awaitable, asyncio.sleep, 0.1) for _ in range(50)
-        ]
+        fs = [submit(executor, as_awaitable, asyncio.sleep, 0.1) for _ in range(50)]
         await executor.shutdown(cancel_futures=cancel_futures)
-
-        cancelled = [fut for fut in fs if fut.cancelled()]
-        others = [fut for fut in fs if not fut.cancelled()]
         if cancel_futures:
-            # 5 tasks were picked by the workers before the shutdown, 45 were cancelled
-            assert len(cancelled) == 45
-            assert len(others) == 5
+            # All tasks were cancelled
+            assert all(fut.cancelled() for fut in fs)
         else:
-            # No tasks were cancelled
-            assert len(cancelled) == 0
-            assert len(others) == 50
-
-        for fut in others:
-            assert fut.done()
-            assert fut.exception() is None
+            # All tasks were completed
+            assert all(fut.done() for fut in fs)
+            assert all(fut.result() is None for fut in fs)
 
     @pytest.mark.skipif(
         not hasattr(signal, "alarm"), reason="signal.alarm not available"
@@ -81,12 +71,12 @@ class TestTaskPoolShutdown:
             raise RuntimeError("timed out waiting for shutdown")  # pragma: no cover
 
         executor = TaskPoolExecutor(max_workers=1)
-        future = await submit(executor, as_awaitable, amul, 2, 5)
+        future = submit(executor, as_awaitable, amul, 2, 5)
         await future
         old_handler = signal.signal(signal.SIGALRM, timeout)
         try:
             signal.alarm(5)
-            future = await submit(executor, as_awaitable, amul, 2, 5)
+            future = submit(executor, as_awaitable, amul, 2, 5)
             future.cancel()
             await executor.shutdown(wait=True)
         finally:
@@ -100,7 +90,7 @@ class TestTaskPoolShutdown:
 
         sem = asyncio.Semaphore(0)
         for _ in range(3):
-            await submit(executor, as_awaitable, acquire_lock, sem)
+            submit(executor, as_awaitable, acquire_lock, sem)
         assert len(executor._tasks) == 3
         for _ in range(3):
             sem.release()
@@ -117,7 +107,7 @@ class TestTaskPoolShutdown:
     @pytest.mark.parametrize("explicit_shutdown", [False, True])
     async def test_shutdown_no_wait(self, as_awaitable, explicit_shutdown):
         executor = TaskPoolExecutor(max_workers=5)
-        future = await submit(executor, as_awaitable, amul, 2, 5)
+        future = submit(executor, as_awaitable, amul, 2, 5)
         res = await executor.map(aabs, range(-5, 5))
         tasks = executor._tasks
         if explicit_shutdown:

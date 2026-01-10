@@ -33,7 +33,7 @@ async def main():
     # Create an executor with a pool of 3 workers
     async with TaskPoolExecutor(max_workers=3) as executor:
         # Submit a single task
-        future = await executor.submit(fetch_data, "https://example.com")
+        future = executor.submit(fetch_data, "https://example.com")
         result = await future
         print(result)  # Data from https://example.com
 
@@ -50,7 +50,7 @@ Creates a new task pool executor.
 - `max_workers`: Maximum number of workers (defaults to `os.cpu_count()`)
 - `task_name_prefix`: Optional prefix for worker task names
 
-### `async submit(fn, /, *args, **kwargs) -> asyncio.Future`
+### `submit(fn, /, *args, **kwargs) -> asyncio.Future`
 
 Submits a callable to be executed. Returns an `asyncio.Future`.
 
@@ -61,7 +61,7 @@ async def multiply(x: int, y: int) -> int:
 
 
 async with TaskPoolExecutor() as executor:
-    future = await executor.submit(multiply, 6, 7)
+    future = executor.submit(multiply, 6, 7)
     result = await future
     print(result)  # 42
 ```
@@ -71,7 +71,7 @@ You can also submit an awaitable directly:
 ```python
 async with TaskPoolExecutor() as executor:
     coro = multiply(6, 7)
-    future = await executor.submit(coro)
+    future = executor.submit(coro)
     result = await future
     print(result)  # 42
 ```
@@ -136,9 +136,9 @@ async def task(name: str, delay: float) -> str:
 
 async with TaskPoolExecutor(max_workers=3) as executor:
     futures = [
-        await executor.submit(task, "fast", 0.1),
-        await executor.submit(task, "medium", 0.2),
-        await executor.submit(task, "slow", 0.3),
+        executor.submit(task, "fast", 0.1),
+        executor.submit(task, "medium", 0.2),
+        executor.submit(task, "slow", 0.3),
     ]
 
     # Wait for the first task to complete
@@ -161,9 +161,9 @@ async with TaskPoolExecutor(max_workers=3) as executor:
 ```python
 async with TaskPoolExecutor(max_workers=3) as executor:
     futures = [
-        await executor.submit(task, "task1", 0.3),
-        await executor.submit(task, "task2", 0.1),
-        await executor.submit(task, "task3", 0.2),
+        executor.submit(task, "task1", 0.3),
+        executor.submit(task, "task2", 0.1),
+        executor.submit(task, "task3", 0.2),
     ]
 
     # Process results as they complete
@@ -177,9 +177,9 @@ async with TaskPoolExecutor(max_workers=3) as executor:
 ```python
 async with TaskPoolExecutor(max_workers=3) as executor:
     futures = [
-        await executor.submit(task, "task1", 0.3),
-        await executor.submit(task, "task2", 0.1),
-        await executor.submit(task, "task3", 0.2),
+        executor.submit(task, "task1", 0.3),
+        executor.submit(task, "task2", 0.1),
+        executor.submit(task, "task3", 0.2),
     ]
 
     # Wait for all and collect results
@@ -198,7 +198,7 @@ async def failing_task():
 
 
 async with TaskPoolExecutor() as executor:
-    future = await executor.submit(failing_task)
+    future = executor.submit(failing_task)
 
     try:
         await future
@@ -218,7 +218,7 @@ async def long_running_task():
 
 
 async with TaskPoolExecutor() as executor:
-    future = await executor.submit(long_running_task)
+    future = executor.submit(long_running_task)
 
     # Cancel the task
     future.cancel()

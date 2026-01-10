@@ -1,5 +1,4 @@
 import asyncio
-import contextlib
 import inspect
 import itertools as it
 import os
@@ -38,14 +37,14 @@ class TaskPoolExecutor:
         await self.shutdown()
 
     @overload
-    async def submit(
+    def submit(
         self, fn: Callable[P, Awaitable[T]], /, *args: P.args, **kwargs: P.kwargs
     ) -> asyncio.Future[T]: ...
 
     @overload
-    async def submit(self, aw: Awaitable[T], /) -> asyncio.Future[T]: ...
+    def submit(self, aw: Awaitable[T], /) -> asyncio.Future[T]: ...
 
-    async def submit(
+    def submit(
         self,
         aw_or_fn: Callable[P, Awaitable[T]] | Awaitable[T],
         /,
@@ -64,13 +63,12 @@ class TaskPoolExecutor:
             # When the future gets garbage collected, ensure the coroutine is closed
             weakref.finalize(future, _close_unawaited_coro, awaitable)
 
-        async with self._shutdown_lock:
-            if self._shutdown:
-                raise RuntimeError("cannot schedule new futures after shutdown")
+        if self._shutdown:
+            raise RuntimeError("cannot schedule new futures after shutdown")
 
-            await self._work_queue.put((future, awaitable))
-            await self._adjust_task_count()
-            return future
+        self._work_queue.put_nowait((future, awaitable))
+        self._adjust_task_count()
+        return future
 
     async def map(
         self,
@@ -88,9 +86,9 @@ class TaskPoolExecutor:
         submissions = (self.submit(fn, *args) for args in zipped_iterables)
         fs: list[asyncio.Future[T]] | deque[asyncio.Future[T]]
         if buffersize is None:
-            fs = await asyncio.gather(*submissions)
+            fs = list(submissions)
         else:
-            fs = fsd = deque(await asyncio.gather(*it.islice(submissions, buffersize)))
+            fs = fsd = deque(it.islice(submissions, buffersize))
 
         # Use a weak reference to ensure that the executor can be garbage
         # collected independently of the result_iterator closure.
@@ -108,7 +106,7 @@ class TaskPoolExecutor:
                         and (executor := executor_weakref())
                         and (args := next(zipped_iterables, None))
                     ):
-                        fsd.appendleft(await executor.submit(fn, *args))
+                        fsd.appendleft(executor.submit(fn, *args))
 
                     # Careful not to keep a reference to the popped future
                     yield await fs.pop()
@@ -139,12 +137,11 @@ class TaskPoolExecutor:
         if wait and self._tasks:
             await asyncio.wait(self._tasks)
 
-    async def _adjust_task_count(self) -> None:
+    def _adjust_task_count(self) -> None:
         # If idle workers are available, don't spin new ones
-        with contextlib.suppress(TimeoutError):
-            async with asyncio.timeout(0):
-                if await self._idle_semaphore.acquire():
-                    return
+        if not self._idle_semaphore.locked():
+            self._idle_semaphore._value -= 1  # noqa: SLF001
+            return
 
         num_tasks = len(self._tasks)
         if num_tasks < self._max_workers:

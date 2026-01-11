@@ -4,7 +4,7 @@ requires = ["setuptools>=67", "wheel"]
 
 [project]
 name = "cf-taskpool"
-version = "0.1.0"
+version = "0.2.0"
 description = "A concurrent.futures-like API for executing coroutines using a pool of tasks"
 readme = {file = "README.md", content-type = "text/markdown"}
 authors = [{name = "George Sakkis", email = "george.sakkis@gmail.com"}]
